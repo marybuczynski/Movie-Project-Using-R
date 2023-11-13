@@ -1,0 +1,138 @@
+---
+title: "Final Project"
+author: "Mary Buczynski"
+date: "4/27/2022"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+#### Insert libraries
+```{r}
+library(rpart)
+library(tree)
+library(randomForest)
+library(gbm)
+library(ROCR)
+library(readr)
+```
+
+#### Read in library
+```{r}
+oscars.df <- read_csv("oscars_df - oscars_df.csv")
+oscars.df.ex.na <- read_csv("oscars_df - oscars_df.csv")
+seed.val<-12345
+```
+
+#### Make columns factors
+```{r}
+oscars.df$Award <- factor(oscars.df$Award)
+oscars.df$Consolidated.Genre <- factor(oscars.df$Consolidated.Genre)
+oscars.df$Content.Rating <- factor(oscars.df$Content.Rating)
+oscars.df$Audience.Status <- factor(oscars.df$Audience.Status)
+oscars.df$Tomatometer.Status <- factor(oscars.df$Tomatometer.Status)
+```
+
+#### Delete irrelevant/unusable columns and rows
+```{r}
+oscars.df <- subset(oscars.df, select = -c(...1, Oscar.Year, Film.Studio.Producer.s, Movie.Info, Critic.Consensus, Film.ID, Movie.Genre, Directors, Authors, Actors, Original.Release.Date, Streaming.Release.Date, Production.Company, Tomatometer.Top.Critics.Count, Tomatometer.Fresh.Critics.Count, Tomatometer.Rotten.Critics.Count, Tomatometer.Count, Genres, Film))
+oscars.df.ex.na <- oscars.df[!(is.na(oscars.df$Content.Rating) | oscars.df$Content.Rating ==""), ]
+```
+
+#### Single Tree
+```{r}
+set.seed(seed.val)
+data.size.tree<-nrow(oscars.df.ex.na)
+train.rows.tree<-sample(1:data.size.tree, data.size.tree/2)
+train.data.tree<-oscars.df.ex.na[train.rows.tree,]
+test.data.tree<-oscars.df.ex.na[-train.rows.tree,]
+true.vals.tree<-test.data.tree[, 12]
+
+tree.movies <- tree(Award ~ Movie.Time + Consolidated.Genre + IMDB.Rating + IMDB.Votes + Content.Rating + Tomatometer.Status + Tomatometer.Rating + Audience.Status + Audience.Count, data=train.data.tree)
+summary(tree.movies)
+plot(tree.movies)
+text(tree.movies)
+tree.movies
+```
+
+#### Pruned Single Tree
+```{r}
+cv.movies <-cv.tree(tree.movies)
+plot(cv.movies$size, cv.movies$dev, type="b")
+pruned.tree <- prune.tree(tree.movies, best=6)
+plot(pruned.tree)
+text(pruned.tree)
+pruned.tree
+```
+
+#### Time Series of winners & length of movie
+```{r}
+oscar.winners <- oscars.df[oscars.df$Award == "Winner", ]
+movies.vec <- oscar.winners$Movie.Time 
+movie.ts <- ts(movies.vec, frequency=1, start=c(1927))
+movie.ts.plot <- plot(movie.ts, xlab="Year of Release", ylab="Length of Movie (minutes)", main="Length of Best Picture Winners from 1927 to 2019")
+```
+
+#### Boxplots of IMDB Ratings for all movies and oscar winners
+```{r}
+boxplot(oscar.winners$IMDB.Rating, main="IMDB Rating for Oscar Winning Movies")
+boxplot(oscars.df.ex.na$IMDB.Rating, main="IMDB Rating for Oscar Winning & Nominated Movies")
+```
+
+
+#### Random Forest for Movie Attributes
+```{r}
+movie.attributes.df <- subset(oscars.df.ex.na, select=c("Award", "Movie.Time", "Consolidated.Genre", "Content.Rating"))
+
+data.size.rf <- nrow(movie.attributes.df)
+train.rows.rf <- sample(1:data.size.rf, data.size.rf/2)
+train.data.rf <- movie.attributes.df[train.rows.rf,]
+test.data.rf <- movie.attributes.df[-train.rows.rf,]
+true.vals.rf <- test.data.rf[,1]
+
+tree.attributes <- tree(Award ~ Movie.Time + Consolidated.Genre + Content.Rating, train.data.rf)
+plot(tree.attributes)
+text(tree.attributes)
+pruned.attributes <- prune.tree(tree.attributes, best=5)
+plot(pruned.attributes)
+text(pruned.attributes)
+
+rf.movie.att <- randomForest(Award ~., data=train.data.rf, mtry=3, importance=TRUE)
+rf.pred <- predict(rf.movie.att, newdata=test.data.rf)
+importance(rf.movie.att)
+varImpPlot(rf.movie.att)
+```
+
+#### Random Forest for Movie Ratings
+```{r}
+movie.ratings.df <- subset(oscars.df.ex.na, select=c("Award", "IMDB.Rating", "Tomatometer.Status", "Tomatometer.Rating", "Audience.Rating", "Audience.Status"))
+movie.ratings.df <- movie.ratings.df[!(is.na(movie.ratings.df$Audience.Status) | movie.ratings.df$Audience.Status ==""), ]
+
+data.size.rf.rate <- nrow(movie.ratings.df)
+train.rows.rf.rate <- sample(1:data.size.rf.rate, data.size.rf.rate/2)
+train.data.rf.rate <- movie.ratings.df[train.rows.rf.rate,]
+test.data.rf.rate <- movie.ratings.df[-train.rows.rf.rate,]
+true.vals.rf.rate <- test.data.rf.rate[,1]
+
+rf.movie.rate <- randomForest(Award ~., data=train.data.rf.rate, mtry=5, importance=TRUE)
+rf.pred <- predict(rf.movie.rate, newdata=test.data.rf.rate)
+importance(rf.movie.rate)
+varImpPlot(rf.movie.rate)
+```
+
+### Logistic Regression for Ratings Data
+```{r}
+mod.all.rate <- glm(Award ~ ., family = binomial(logit), data = movie.ratings.df)
+summary(mod.all.rate)
+mod.step.rate <- step(mod.all.rate)
+summary(mod.step.rate)
+```
+
+#### Logistic Regression for Attributes Data
+```{r}
+mod.all.att <- glm(Award ~ ., family = binomial(logit), data = movie.attributes.df)
+summary(mod.all.att)
+mod.step.att <- step(mod.all.att)
+summary(mod.step.att)
+```
+
+
